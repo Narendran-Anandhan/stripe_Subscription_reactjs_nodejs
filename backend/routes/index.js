@@ -1,74 +1,85 @@
 var express = require('express');
 var router = express.Router();
-
+var fetch = require('node-fetch')
+const stripe_load = require('stripe')
 /* GET home page. */
-router.get('/', function(req, res, next) {
-  res.render('index', { title: 'Express' });
-});
 
-// Set your secret key. Remember to switch to your live secret key in production.
-// See your keys here: https://dashboard.stripe.com/apikeys
-const stripe = require('stripe')('sk_test_51LrE87CxvG8uiRsosb41673W9idxFKYefj3lzbaNXaOlmsSiAnFQo8c3RYwyepd5DstXaOk3Em3ujQ7rcug6yXmN00ytxi8cyH');
 
 router.post('/create-subscription', async (req, res) => {
-
-
+  console.log(req.body);
+  
+//const stripe = await stripe_load(req.body.client_secret_key);
+  const stripe = await require('stripe')(req.body.secret_key)
+  //(api.stripe.client_secret_key);
   try {
-
-    
-  const customer = await stripe.customers.create({
-    email: 'john@gmail.com',
-    name: 'john',
-   
-  });
-
+    let customer = "";
+    const existing_customer = await stripe.customers.list({
+      email:req.body.email
+    });
+    if(existing_customer.data && existing_customer.data.length > 0) {
+        customer = existing_customer.data[0];
+    }
+    else{
+         customer = await stripe.customers.create({
+          email: req.body.email,
+          name: req.body.name,
+        });
+    }
+   console.log (customer);
   // const product = await stripe.products.create({
   //   name: 'Montly Subscription',
   // });
+    const price = await stripe.prices.create({
+        currency: req.body.currency ? req.body.currency : "usd",
 
-  const price = await stripe.prices.create({
-    currency: 'usd',
-    unit_amount: 1000,
-    recurring: {
-      interval: 'month',
-    },
-    product_data: {
-      name: 'Monthly Subscription',
-    },
-  });
-
-  console.log(customer.id)
-  console.log(price.id);
-
- // const customerId = req.cookies['customer'];
- const customerId = customer.id;
-  const priceId = price.id;
-  
-    const subscription = await stripe.subscriptions.create({
-      customer: customerId,
-      items: [{
-        price: priceId,
-      }],
-      payment_behavior: 'default_incomplete',
-      payment_settings: { save_default_payment_method: 'on_subscription' },
-      expand: ['latest_invoice.payment_intent', 'pending_setup_intent'],
+        unit_amount: req.body.amount,
+        recurring: {
+        interval: 'day',
+        interval_count: 1,
+        },
+        product_data: {
+        name: 'day Subscription',
+        },
     });
 
-    if (subscription.pending_setup_intent !== null) {
-      res.send({
-        type: 'setup',
-        clientSecret: subscription.pending_setup_intent.client_secret,
-      });
-    } else {
-      res.send({
-        type: 'payment',
-        clientSecret: subscription.latest_invoice.payment_intent.client_secret,
-      });
-    }
+    const current_date = new Date();
+    current_date.setDate(current_date.getDate() + 1);
+    // current_date.setFullYear(current_date.getFullYear() + 1);
+    const datum = Date.parse(current_date);
+    const future_date = datum/1000;
 
-  } catch (error) {
-    return res.status(400).send({ error: { message: error.message } });
-  }
+    const subscription = await stripe.subscriptions.create({
+      customer: customer.id,
+      items: [{
+        price: price.id,
+      }],
+      cancel_at: future_date,
+      payment_behavior: 'default_incomplete',
+      payment_settings: { save_default_payment_method: 'on_subscription',  "payment_method_types": req.body.payment_method_types ? req.body.payment_method_types : ['card']},
+      expand: ['latest_invoice.payment_intent', 'pending_setup_intent'],
+      metadata : {
+        custom:req.body.metadata.custom
+      },
+    
+  });
+  //const invoice = await stripe.invoices.retrieve(subscription.latest_invoice);
+  
+    // const payment_intents_update = await stripe.paymentIntents.update(
+    //     subscription.latest_invoice.payment_intent.id,{
+    //     metadata : {
+    //         custom:req.body.metadata.custom
+    //     },
+    // });
+    res.send({
+      body: JSON.stringify({
+        type: 'payment',
+       // clientSecret : payment_intents_update.client_secret 
+        clientSecret: subscription.latest_invoice.payment_intent.client_secret })
+    });
+    } catch (error) {
+      console.log(error);
+        return res.status(400).send({ error: { message: error.message } });
+    }
 });
 
 module.exports = router;
